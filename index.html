@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arena 3D – TV Olahraga Internasional</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800&family=Barlow:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#0f1f33; --bg2:#17304a; --chalk:#f1f4ec; --turf:#2c8a57; --amber:#ffb627; --muted:#9fb3c4;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:radial-gradient(ellipse at 50% 30%,var(--bg2),var(--bg) 70%);color:var(--chalk);
+  font:400 16px/1.5 Barlow,system-ui,sans-serif;overflow:hidden}
+canvas#stage{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+canvas#stage.drag{cursor:grabbing}
+header{position:fixed;top:0;left:0;right:0;padding:18px 24px;display:flex;justify-content:space-between;align-items:baseline;pointer-events:none}
+h1{margin:0;font:800 34px/1 "Barlow Condensed",Impact,sans-serif;letter-spacing:.01em}
+header p{margin:0;color:var(--muted);font-size:14px}
+.bar{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);width:min(560px,calc(100% - 32px));
+  background:rgba(15,31,51,.82);backdrop-filter:blur(8px);border:1px solid rgba(241,244,236,.14);border-radius:14px;
+  padding:14px 16px;display:flex;gap:12px;align-items:center}
+.info{flex:1;min-width:0}
+.info b{display:block;font:800 24px/1.1 "Barlow Condensed",Impact,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.info span{color:var(--muted);font-size:14px}
+button{font:600 16px Barlow,system-ui,sans-serif;border:0;border-radius:10px;padding:10px 14px;cursor:pointer;color:var(--chalk);background:rgba(241,244,236,.12)}
+button:hover{background:rgba(241,244,236,.2)}
+button.go{background:var(--amber);color:#1b1405}
+button.go:hover{background:#ffc552}
+button:focus-visible{outline:3px solid var(--chalk);outline-offset:2px}
+#player{position:fixed;inset:0;background:rgba(6,12,20,.94);display:none;flex-direction:column;align-items:center;justify-content:center;padding:16px;gap:12px}
+#player.open{display:flex}
+#frame{width:min(1100px,100%);aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden;border:1px solid rgba(241,244,236,.14)}
+#frame iframe,#frame video{width:100%;height:100%;border:0;display:block}
+#note{max-width:640px;text-align:center;color:var(--muted);padding:40px 20px}
+#ptitle{font:800 22px "Barlow Condensed",Impact,sans-serif;margin:0}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+@media (max-width:520px){h1{font-size:26px}header p{display:none}.bar{flex-wrap:wrap}.info{flex-basis:100%}}
+</style>
+</head>
+<body>
+<canvas id="stage" aria-label="Putar untuk memilih channel"></canvas>
+<header>
+  <h1>Arena 3D</h1>
+  <p>Seret untuk memutar, klik kartu untuk menonton</p>
+</header>
+<div class="bar">
+  <button id="prev" aria-label="Channel sebelumnya">‹</button>
+  <div class="info"><b id="cname"></b><span id="csport"></span></div>
+  <button id="next" aria-label="Channel berikutnya">›</button>
+  <button id="watch" class="go">Tonton</button>
+</div>
+<div id="player" role="dialog" aria-modal="true">
+  <p id="ptitle"></p>
+  <div id="frame"></div>
+  <button id="close">Tutup</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
+<script>
+/* ============ DAFTAR CHANNEL — edit bagian ini ============
+   type: "youtube" -> id = ID video/live YouTube resmi, atau channel: "UC..." untuk live channel
+         "hls"     -> url = alamat .m3u8 dari penyedia yang sah
+         "embed"   -> url = halaman embed resmi dari penyelenggara
+         "link"    -> url = situs resmi; dibuka di tab baru (untuk siaran yang tidak boleh di-embed)
+         "none"    -> slot kosong (menampilkan petunjuk)
+   Gunakan hanya siaran yang memang boleh disiarkan ulang/di-embed. */
+const CHANNELS = [
+  /* —— Indonesia —— */
+  { name:"TVRI Sport",      sport:"Indonesia · siaran nasional",       color:"#c8372d", type:"link", url:"https://tvri.go.id" },
+  { name:"Vidio",           sport:"Indonesia · Liga 1 (berlangganan)", color:"#e0571f", type:"link", url:"https://www.vidio.com" },
+  { name:"Metro TV",        sport:"Indonesia · berita 24 jam",         color:"#1f6fb2", type:"link", url:"https://www.metrotvnews.com" },
+  { name:"Kompas TV",       sport:"Indonesia · berita & olahraga",     color:"#b02a3a", type:"link", url:"https://www.kompas.tv" },
+  { name:"tvOne",           sport:"Indonesia · berita & olahraga",     color:"#2a5db0", type:"link", url:"https://www.tvonenews.com" },
+  /* —— Internasional —— */
+  { name:"Olympics",        sport:"Dunia · multi-olahraga, YouTube",   color:"#2c8a57", type:"youtube", channel:"UCTl3QQTvqHFjurroKxexy2Q" },
+  { name:"FIFA+",           sport:"Dunia · sepak bola",                color:"#1b4f9c", type:"link", url:"https://www.plus.fifa.com" },
+  { name:"beIN SPORTS",     sport:"Timur Tengah & Eropa",              color:"#6d3fb0", type:"link", url:"https://www.beinsports.com" },
+  { name:"ESPN",            sport:"Amerika Serikat",                   color:"#b0252a", type:"link", url:"https://www.espn.com" },
+  { name:"Sky Sports",      sport:"Inggris",                           color:"#1a6fa8", type:"link", url:"https://www.skysports.com" },
+  { name:"DAZN",            sport:"Global · tinju, bola, MMA",         color:"#8a7a1f", type:"link", url:"https://www.dazn.com" },
+  { name:"Stream uji HLS",  sport:"Contoh pemutar HLS (Mux)",          color:"#2c6e8a", type:"hls",  url:"https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" }
+];
+/* ========================================================= */
+
+const $ = id => document.getElementById(id);
+const N = CHANNELS.length, STEP = Math.PI*2/N;
+const R = Math.max(4.2, N*0.78);
+
+const canvas = $('stage');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(48,1,.1,100);
+camera.position.set(0,2.1,R+4.4);
+camera.lookAt(0,.2,0);
+
+/* lantai: lapangan dengan cincin garis */
+const floor = new THREE.Mesh(new THREE.CircleGeometry(R+2.2,64), new THREE.MeshBasicMaterial({color:0x1d5c3d,transparent:true,opacity:.55}));
+floor.rotation.x=-Math.PI/2; floor.position.y=-1.15; scene.add(floor);
+[R,R*.55,1.1].forEach(r=>{
+  const ring=new THREE.Mesh(new THREE.RingGeometry(r-.03,r+.03,96), new THREE.MeshBasicMaterial({color:0xf1f4ec,transparent:true,opacity:.55}));
+  ring.rotation.x=-Math.PI/2; ring.position.y=-1.14; scene.add(ring);
+});
+
+/* bola di tengah */
+const ball = new THREE.Mesh(new THREE.IcosahedronGeometry(.85,1), new THREE.MeshBasicMaterial({color:0xffb627,wireframe:true}));
+ball.position.y=.1; scene.add(ball);
+
+/* kartu channel */
+const ring = new THREE.Group(); scene.add(ring);
+const panels = CHANNELS.map((c,i)=>{
+  const cv=document.createElement('canvas'); cv.width=512; cv.height=320;
+  const g=cv.getContext('2d');
+  const grad=g.createLinearGradient(0,0,512,320); grad.addColorStop(0,c.color); grad.addColorStop(1,'#0f1f33');
+  g.fillStyle=grad; g.fillRect(0,0,512,320);
+  g.strokeStyle='rgba(241,244,236,.35)'; g.lineWidth=4; g.strokeRect(14,14,484,292);
+  g.beginPath(); g.arc(256,160,70,0,7); g.moveTo(256,14); g.lineTo(256,306); g.stroke();
+  g.fillStyle='#f1f4ec'; g.font='800 56px "Barlow Condensed",Impact,sans-serif'; g.textAlign='left';
+  g.fillText(c.name,36,92);
+  g.font='500 24px Barlow,sans-serif'; g.fillStyle='rgba(241,244,236,.85)'; g.fillText(c.sport,36,282);
+  if(c.type!=='none'){
+    const lb=c.type==='link'?'Situs resmi':'LIVE'; g.font='800 24px "Barlow Condensed",sans-serif';
+    const bw=g.measureText(lb).width+28; g.fillStyle=c.type==='link'?'#f1f4ec':'#ffb627'; g.fillRect(36,118,bw,34);
+    g.fillStyle='#1b1405'; g.fillText(lb,50,144);
+  }
+  const tex=new THREE.CanvasTexture(cv);
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(2.56,1.6), new THREE.MeshBasicMaterial({map:tex,side:THREE.DoubleSide}));
+  const a=i*STEP; m.position.set(Math.sin(a)*R,0,Math.cos(a)*R); m.rotation.y=a; m.userData.i=i;
+  ring.add(m); return m;
+});
+/* font web mungkin belum siap saat kartu digambar — gambar ulang sekali */
+document.fonts && document.fonts.ready.then(()=>panels.forEach(p=>p.material.map.needsUpdate=true));
+
+let target=0, current=0, sel=0;
+const mod=(a,n)=>((a%n)+n)%n;
+function select(i,snap=true){
+  sel=mod(i,N);
+  if(snap){ const k=Math.round((-target)/STEP); const cur=mod(k,N); let d=sel-cur; if(d>N/2)d-=N; if(d<-N/2)d+=N; target=-(k+d)*STEP; }
+  $('cname').textContent=CHANNELS[sel].name; $('csport').textContent=CHANNELS[sel].sport;
+}
+select(0);
+$('prev').onclick=()=>select(sel-1); $('next').onclick=()=>select(sel+1);
+
+/* interaksi seret & klik */
+let down=false,sx=0,lx=0,moved=0;
+canvas.addEventListener('pointerdown',e=>{down=true;sx=lx=e.clientX;moved=0;canvas.setPointerCapture(e.pointerId);canvas.classList.add('drag')});
+canvas.addEventListener('pointermove',e=>{
+  if(!down)return; moved+=Math.abs(e.clientX-lx); target+=(e.clientX-lx)*0.006; lx=e.clientX;
+  select(Math.round(-target/STEP),false);
+});
+canvas.addEventListener('pointerup',e=>{
+  down=false; canvas.classList.remove('drag');
+  const ray=new THREE.Raycaster(), r=canvas.getBoundingClientRect();
+  if(moved<6){
+    ray.setFromCamera(new THREE.Vector2((e.clientX-r.left)/r.width*2-1,-((e.clientY-r.top)/r.height*2-1)),camera);
+    const hit=ray.intersectObjects(panels)[0];
+    if(hit){ select(hit.object.userData.i); setTimeout(()=>openPlayer(sel),250); return; }
+  }
+  select(Math.round(-target/STEP));
+});
+addEventListener('keydown',e=>{
+  if(e.key==='Escape')closePlayer();
+  if($('player').classList.contains('open'))return;
+  if(e.key==='ArrowLeft')select(sel-1); if(e.key==='ArrowRight')select(sel+1); if(e.key==='Enter')openPlayer(sel);
+});
+
+/* pemutar */
+let hls=null;
+function openPlayer(i){
+  const c=CHANNELS[i], f=$('frame'); f.innerHTML=''; $('ptitle').textContent=c.name;
+  if(c.type==='youtube'){
+    const q=c.channel?`live_stream?channel=${c.channel}&autoplay=1`:`${c.id}?autoplay=1`;
+    f.innerHTML=`<iframe src="https://www.youtube.com/embed/${q}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen title="${c.name}"></iframe>`;
+  }else if(c.type==='embed'){
+    f.innerHTML=`<iframe src="${c.url}" allow="autoplay; fullscreen" allowfullscreen title="${c.name}"></iframe>`;
+  }else if(c.type==='link'){
+    f.innerHTML=`<div id="note"><p><b>${c.name}</b> menyiarkan lewat situs resminya.</p><p><a href="${c.url}" target="_blank" rel="noopener noreferrer"><button class="go">Buka situs resmi</button></a></p></div>`;
+  }else if(c.type==='hls'){
+    const v=document.createElement('video'); v.controls=true; v.autoplay=true; v.playsInline=true; f.appendChild(v);
+    if(window.Hls&&Hls.isSupported()){ hls=new Hls(); hls.loadSource(c.url); hls.attachMedia(v); }
+    else v.src=c.url;
+  }else{
+    f.innerHTML='<div id="note"><p><b>Slot ini masih kosong.</b></p><p>Buka <code>index.html</code>, cari <code>CHANNELS</code>, lalu isi <code>type</code> dan <code>url</code> dengan siaran yang sah.</p></div>';
+  }
+  $('player').classList.add('open'); $('close').focus();
+}
+function closePlayer(){
+  if(hls){hls.destroy();hls=null}
+  $('frame').innerHTML=''; $('player').classList.remove('open');
+}
+$('watch').onclick=()=>openPlayer(sel); $('close').onclick=closePlayer;
+
+/* render */
+const still=matchMedia('(prefers-reduced-motion:reduce)').matches;
+function resize(){
+  const w=innerWidth,h=innerHeight; renderer.setSize(w,h,false);
+  camera.aspect=w/h; camera.fov=w<h?70:48; camera.updateProjectionMatrix();
+}
+addEventListener('resize',resize); resize();
+const clock=new THREE.Clock();
+(function loop(){
+  const t=clock.getElapsedTime();
+  current+=(target-current)*0.1; ring.rotation.y=current;
+  if(!still){ ball.rotation.y=t*.5; ball.rotation.x=t*.25; ball.position.y=.1+Math.sin(t)*.08; }
+  panels.forEach((p,i)=>{ const s=i===sel?1.12:1; p.scale.setScalar(p.scale.x+(s-p.scale.x)*.15); });
+  renderer.render(scene,camera); requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
